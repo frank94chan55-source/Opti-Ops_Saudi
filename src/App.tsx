@@ -128,12 +128,14 @@ const InputGroup = ({
   );
 };
 
-const StatCard = ({ label, value, subtext, icon: Icon, trend }: { 
+const StatCard = ({ label, value, subtext, icon: Icon, trend, valueClassName, subtextClassName }: { 
   label: string; 
   value: string | number; 
   subtext?: string; 
   icon: any;
   trend?: string;
+  valueClassName?: string;
+  subtextClassName?: string;
 }) => (
   <motion.div 
     initial={{ opacity: 0, y: 10 }}
@@ -144,12 +146,19 @@ const StatCard = ({ label, value, subtext, icon: Icon, trend }: {
       <div className="p-2.5 bg-zinc-50 rounded-lg border border-zinc-200">
         <Icon size={20} className="text-zinc-800" />
       </div>
-      {trend && <span className="text-xs font-mono text-emerald-700 font-bold uppercase tracking-tighter">{trend}</span>}
+      {trend && (
+        <span className={cn(
+          "text-xs font-mono font-bold uppercase tracking-tighter",
+          trend === "Positive" ? "text-emerald-700" : trend === "Negative" ? "text-rose-700" : "text-zinc-500"
+        )}>
+          {trend}
+        </span>
+      )}
     </div>
     <div>
       <p className="text-xs font-mono uppercase tracking-widest text-zinc-600">{label}</p>
-      <h3 className="text-3xl font-mono font-medium text-zinc-950 mt-1">{value}</h3>
-      {subtext && <p className="text-xs font-mono text-zinc-600 mt-1">{subtext}</p>}
+      <h3 className={cn("text-3xl font-mono font-medium mt-1", valueClassName || "text-zinc-950")}>{value}</h3>
+      {subtext && <p className={cn("text-xs font-mono mt-1", subtextClassName || "text-zinc-600")}>{subtext}</p>}
     </div>
   </motion.div>
 );
@@ -162,9 +171,9 @@ export default function App() {
     jed: 7000
   });
   const [productivity, setProductivity] = useState<ProductivityData>({
-    ruh: 200,
-    dmm: 200,
-    jed: 200
+    ruh: 224,
+    dmm: 189,
+    jed: 138
   });
   
   const STATION_HOURS = {
@@ -178,6 +187,9 @@ export default function App() {
     dmm: { fte: 12, sc: 23 },
     jed: { fte: 11, sc: 71 }
   });
+  const [loadingFactor, setLoadingFactor] = useState(1.05);
+  const [fteCost, setFteCost] = useState(2200);
+  const [scCost, setScCost] = useState(1500);
 
   const currentFte = useMemo(() => currentHC.ruh.fte + currentHC.dmm.fte + currentHC.jed.fte, [currentHC]);
   const currentSc = useMemo(() => currentHC.ruh.sc + currentHC.dmm.sc + currentHC.jed.sc, [currentHC]);
@@ -189,6 +201,7 @@ export default function App() {
     return (currentFte / total) * 100;
   }, [currentFte, currentSc]);
   const totalTonnage = useMemo(() => tonnage.ruh + tonnage.dmm + tonnage.jed, [tonnage]);
+  const overallProductivity = useMemo(() => Math.round((productivity.ruh + productivity.dmm + productivity.jed) / 3), [productivity]);
   
   const handleTotalTonnageChange = (newTotal: number) => {
     if (totalTonnage === 0) {
@@ -208,12 +221,33 @@ export default function App() {
     });
   };
 
+  const handleOverallProductivityChange = (newOverall: number) => {
+    if (totalTonnage === 0) {
+      const third = Math.round(newOverall / 3);
+      setProductivity({
+        ruh: third,
+        dmm: third,
+        jed: newOverall - (2 * third)
+      });
+      return;
+    }
+    const ruh = Math.round((tonnage.ruh / totalTonnage) * newOverall * 3);
+    const dmm = Math.round((tonnage.dmm / totalTonnage) * newOverall * 3);
+    const jed = Math.round((tonnage.jed / totalTonnage) * newOverall * 3);
+    setProductivity({ ruh, dmm, jed });
+  };
+
+  // Keep productivity targets in sync with tonnage ratios when tonnage changes
+  useEffect(() => {
+    handleOverallProductivityChange(overallProductivity);
+  }, [tonnage, totalTonnage]);
+
   const calculateHours = (t: number, p: number) => (t * 1000) / p;
 
   const results = useMemo(() => {
-    const ruhHours = calculateHours(tonnage.ruh, productivity.ruh);
-    const dmmHours = calculateHours(tonnage.dmm, productivity.dmm);
-    const jedHours = calculateHours(tonnage.jed, productivity.jed);
+    const ruhHours = calculateHours(tonnage.ruh, productivity.ruh) * loadingFactor;
+    const dmmHours = calculateHours(tonnage.dmm, productivity.dmm) * loadingFactor;
+    const jedHours = calculateHours(tonnage.jed, productivity.jed) * loadingFactor;
     
     const OPERATING_DAYS = 30;
     const MONTHLY_HOURS = 300; // 10 hours * 30 days
@@ -235,7 +269,7 @@ export default function App() {
       scMonthlyHours: MONTHLY_HOURS,
       operatingDays: OPERATING_DAYS
     };
-  }, [tonnage, productivity]);
+  }, [tonnage, productivity, loadingFactor]);
 
   // Optimization Logic
   const optimization = useMemo(() => {
@@ -253,10 +287,17 @@ export default function App() {
     return optimization;
   }, [optimization]);
 
+  const savings = useMemo(() => {
+    const fteDiff = currentFte - optimization.fte;
+    const scDiff = currentSc - optimization.sc;
+    return (fteDiff * fteCost) + (scDiff * scCost);
+  }, [currentFte, currentSc, optimization, fteCost, scCost]);
+
   const chartData = [
     { name: 'RUH', heads: results.ruhHC, color: '#18181b' },
     { name: 'DMM', heads: results.dmmHC, color: '#3f3f46' },
     { name: 'JED', heads: results.jedHC, color: '#71717a' },
+    { name: 'SATS Saudi', heads: results.totalHC, color: '#ef2536' },
   ];
 
   return (
@@ -347,28 +388,43 @@ export default function App() {
               <Zap size={16} className="text-zinc-700" />
               <h2 className="text-base font-mono font-bold uppercase tracking-widest text-brand-red">Productivity Targets</h2>
             </div>
+            
+            <InputGroup 
+              label="Saudi Overall Productivity" 
+              value={overallProductivity} 
+              onChange={handleOverallProductivityChange}
+              min={100} 
+              max={1000} 
+              unit="KG/HR"
+              icon={Zap}
+            />
+
+            <div className="px-5 py-2.5 bg-zinc-50/50 border-b border-zinc-100">
+              <p className="text-[10px] font-mono text-zinc-600 uppercase tracking-widest">Station Breakdown</p>
+            </div>
+
             <InputGroup 
               label="RUH Productivity" 
               value={productivity.ruh} 
               onChange={(v) => setProductivity(prev => ({ ...prev, ruh: v }))}
-              min={100} 
-              max={350} 
+              min={1} 
+              max={overallProductivity} 
               unit="KG/HR"
             />
             <InputGroup 
               label="DMM Productivity" 
               value={productivity.dmm} 
               onChange={(v) => setProductivity(prev => ({ ...prev, dmm: v }))}
-              min={100} 
-              max={350} 
+              min={1} 
+              max={overallProductivity} 
               unit="KG/HR"
             />
             <InputGroup 
               label="JED Productivity" 
               value={productivity.jed} 
               onChange={(v) => setProductivity(prev => ({ ...prev, jed: v }))}
-              min={100} 
-              max={350} 
+              min={1} 
+              max={overallProductivity} 
               unit="KG/HR"
             />
           </section>
@@ -423,6 +479,68 @@ export default function App() {
                 </div>
               </div>
             </div>
+
+            <div className="p-4 bg-zinc-50/30">
+              <div className="flex items-center gap-2 mb-4 px-1">
+                <Clock size={14} className="text-zinc-500" />
+                <h3 className="text-xs font-mono font-bold uppercase tracking-widest text-zinc-900">Loading Factor</h3>
+              </div>
+              <div className="space-y-4 p-3 bg-zinc-50 rounded-lg border border-zinc-100">
+                <div className="flex justify-between items-center">
+                  <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-zinc-500">Multiplier</span>
+                  <span className="text-xs font-mono font-bold text-brand-red">{loadingFactor.toFixed(2)}x</span>
+                </div>
+                <input 
+                  type="range" 
+                  min="1.00" 
+                  max="1.50" 
+                  step="0.01" 
+                  value={loadingFactor} 
+                  onChange={(e) => setLoadingFactor(Number(e.target.value))}
+                  className="w-full h-1.5 bg-zinc-200 rounded-lg appearance-none cursor-pointer accent-brand-red"
+                />
+                <div className="flex justify-between text-[8px] font-mono text-zinc-400 uppercase">
+                  <span>1.00 (Base)</span>
+                  <span>1.50 (Max)</span>
+                </div>
+                <p className="text-[9px] leading-relaxed text-zinc-500 italic">
+                  * Accounts for non-productive time (training, meetings, breaks, etc.)
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 bg-zinc-50/30">
+              <div className="flex items-center gap-2 mb-4 px-1">
+                <DollarSign size={14} className="text-zinc-500" />
+                <h3 className="text-xs font-mono font-bold uppercase tracking-widest text-zinc-900">Headcount Costs (SGD)</h3>
+              </div>
+              <div className="space-y-4 p-3 bg-zinc-50 rounded-lg border border-zinc-100">
+                <div className="space-y-1">
+                  <label className="text-[9px] font-mono uppercase text-zinc-500">1 FTE Monthly Cost</label>
+                  <div className="relative">
+                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-zinc-400">$</span>
+                    <input 
+                      type="number" 
+                      value={fteCost}
+                      onChange={(e) => setFteCost(Number(e.target.value))}
+                      className="w-full bg-white border border-zinc-300 rounded pl-5 pr-2 py-1.5 text-xs font-mono text-zinc-900 focus:outline-none focus:border-zinc-500"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[9px] font-mono uppercase text-zinc-500">1 SC Monthly Cost</label>
+                  <div className="relative">
+                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-zinc-400">$</span>
+                    <input 
+                      type="number" 
+                      value={scCost}
+                      onChange={(e) => setScCost(Number(e.target.value))}
+                      className="w-full bg-white border border-zinc-300 rounded pl-5 pr-2 py-1.5 text-xs font-mono text-zinc-900 focus:outline-none focus:border-zinc-500"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
           </section>
         </div>
 
@@ -430,7 +548,7 @@ export default function App() {
         <div className="lg:col-span-8 space-y-8">
           
           {/* Summary Stats */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <StatCard 
               label="Recommended Total Headcount" 
               value={Math.ceil(results.totalHC)} 
@@ -448,6 +566,14 @@ export default function App() {
               value={optimization.sc} 
               subtext="Sub-Contractors"
               icon={Users}
+            />
+            <StatCard 
+              label="Est. Monthly Savings" 
+              value={`SGD ${(-savings).toLocaleString()}`} 
+              subtext={savings >= 0 ? "Potential Cost Reduction" : "Additional Cost Required"}
+              icon={DollarSign}
+              valueClassName={savings >= 0 ? "text-emerald-600" : "text-rose-600"}
+              subtextClassName={cn("text-sm font-bold", savings >= 0 ? "text-emerald-600" : "text-rose-600")}
             />
           </div>
 
@@ -477,6 +603,7 @@ export default function App() {
                       contentStyle={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                       itemStyle={{ color: '#0f172a', fontFamily: 'monospace', fontSize: '11px' }}
                       labelStyle={{ color: '#64748b', fontFamily: 'monospace', fontSize: '11px', marginBottom: '4px' }}
+                      formatter={(value: number) => [Math.ceil(value), "Headcount"]}
                     />
                     <Bar dataKey="heads" radius={[0, 4, 4, 0]} barSize={32}>
                       {chartData.map((entry, index) => (
@@ -486,7 +613,7 @@ export default function App() {
                         dataKey="heads" 
                         position="right" 
                         style={{ fill: '#18181b', fontSize: '11px', fontFamily: 'monospace', fontWeight: 'bold' }}
-                        formatter={(value: number) => value.toFixed(1)}
+                        formatter={(value: number) => Math.ceil(value)}
                       />
                     </Bar>
                   </BarChart>
@@ -591,10 +718,10 @@ export default function App() {
                   <tr className="border-b border-zinc-100 text-zinc-600 uppercase tracking-tighter">
                     <th className="px-6 py-5 font-medium">Station</th>
                     <th className="px-6 py-5 font-medium">Recommended Total Headcount</th>
-                    <th className="px-6 py-5 font-medium">Recommended Headcount - FTE</th>
-                    <th className="px-6 py-5 font-medium">Recommended Headcount - SC</th>
                     <th className="px-6 py-5 font-medium">Variance (Headcount)</th>
-                    <th className="px-6 py-5 font-medium text-right">Variance %</th>
+                    <th className="px-6 py-5 font-medium">Variance %</th>
+                    <th className="px-6 py-5 font-medium">Recommended Headcount - FTE</th>
+                    <th className="px-6 py-5 font-medium text-right">Recommended Headcount - SC</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-50">
@@ -621,8 +748,6 @@ export default function App() {
                         <tr key={i} className={cn("hover:bg-zinc-50/50 transition-colors", row.highlight && "bg-zinc-50 font-bold")}>
                           <td className="px-6 py-5 text-zinc-950">{row.name}</td>
                           <td className="px-6 py-5 text-zinc-700">{Math.ceil(recTotal)}</td>
-                          <td className="px-6 py-5 text-zinc-700">{Math.ceil(recFte)}</td>
-                          <td className="px-6 py-5 text-zinc-700">{Math.ceil(recSc)}</td>
                           <td className={cn(
                             "px-6 py-5 font-bold",
                             variance > 0 ? "text-emerald-600" : variance < 0 ? "text-rose-600" : "text-zinc-400"
@@ -630,11 +755,13 @@ export default function App() {
                             {variance > 0 ? `+${Math.ceil(variance)}` : Math.ceil(variance)}
                           </td>
                           <td className={cn(
-                            "px-6 py-5 text-right font-bold",
+                            "px-6 py-5 font-bold",
                             variancePercent > 0 ? "text-emerald-600" : variancePercent < 0 ? "text-rose-600" : "text-zinc-400"
                           )}>
                             {variancePercent > 0 ? `+${variancePercent.toFixed(1)}%` : `${variancePercent.toFixed(1)}%`}
                           </td>
+                          <td className="px-6 py-5 text-zinc-700">{Math.ceil(recFte)}</td>
+                          <td className="px-6 py-5 text-zinc-700 text-right">{Math.ceil(recSc)}</td>
                         </tr>
                       );
                     });
