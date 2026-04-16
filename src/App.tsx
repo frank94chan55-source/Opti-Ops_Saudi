@@ -433,7 +433,7 @@ export default function App() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <StatCard 
               label="Recommended Total Headcount" 
-              value={results.totalHC.toFixed(1)} 
+              value={Math.ceil(results.totalHC)} 
               subtext={`${Math.round(results.total).toLocaleString()} Productive Hours`}
               icon={Users}
             />
@@ -582,7 +582,7 @@ export default function App() {
             <div className="px-5 py-4 border-b border-zinc-100 bg-zinc-50/50 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <TrendingUp size={16} className="text-zinc-700" />
-                <h2 className="text-base font-mono font-bold uppercase tracking-widest text-brand-red">Recommended Plan</h2>
+                <h2 className="text-base font-mono font-bold uppercase tracking-widest text-brand-red">Recommended Manpower Plan</h2>
               </div>
             </div>
             <div className="overflow-x-auto">
@@ -620,14 +620,14 @@ export default function App() {
                       return (
                         <tr key={i} className={cn("hover:bg-zinc-50/50 transition-colors", row.highlight && "bg-zinc-50 font-bold")}>
                           <td className="px-6 py-5 text-zinc-950">{row.name}</td>
-                          <td className="px-6 py-5 text-zinc-700">{recTotal.toFixed(1)}</td>
-                          <td className="px-6 py-5 text-zinc-700">{recFte.toFixed(1)}</td>
-                          <td className="px-6 py-5 text-zinc-700">{recSc.toFixed(1)}</td>
+                          <td className="px-6 py-5 text-zinc-700">{Math.ceil(recTotal)}</td>
+                          <td className="px-6 py-5 text-zinc-700">{Math.ceil(recFte)}</td>
+                          <td className="px-6 py-5 text-zinc-700">{Math.ceil(recSc)}</td>
                           <td className={cn(
                             "px-6 py-5 font-bold",
                             variance > 0 ? "text-emerald-600" : variance < 0 ? "text-rose-600" : "text-zinc-400"
                           )}>
-                            {variance > 0 ? `+${variance.toFixed(1)}` : variance.toFixed(1)}
+                            {variance > 0 ? `+${Math.ceil(variance)}` : Math.ceil(variance)}
                           </td>
                           <td className={cn(
                             "px-6 py-5 text-right font-bold",
