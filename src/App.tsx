@@ -256,19 +256,24 @@ export default function App() {
     
     // 1. Global Optimization based on current total FTE%
     const minFteHours = totalHours * (effectiveMinFtePercent / 100);
-    const totalFte = Math.ceil(minFteHours / MONTHLY_HOURS);
-    const remainingHours = Math.max(0, totalHours - (totalFte * MONTHLY_HOURS));
-    const totalSc = Math.ceil(remainingHours / MONTHLY_HOURS);
-    const totalHC = totalFte + totalSc;
+    const globalFte = Math.ceil(minFteHours / MONTHLY_HOURS);
+    const remainingHours = Math.max(0, totalHours - (globalFte * MONTHLY_HOURS));
+    const globalSc = Math.ceil(remainingHours / MONTHLY_HOURS);
 
     // 2. Distribute FTEs and SCs based on their respective current shares
-    const ruhFte = totalFte * (currentFte > 0 ? currentHC.ruh.fte / currentFte : 1/3);
-    const dmmFte = totalFte * (currentFte > 0 ? currentHC.dmm.fte / currentFte : 1/3);
-    const jedFte = totalFte * (currentFte > 0 ? currentHC.jed.fte / currentFte : 1/3);
+    // We use Math.ceil here to ensure station-level requirements are met
+    const ruhFte = Math.ceil(globalFte * (currentFte > 0 ? currentHC.ruh.fte / currentFte : 1/3));
+    const dmmFte = Math.ceil(globalFte * (currentFte > 0 ? currentHC.dmm.fte / currentFte : 1/3));
+    const jedFte = Math.ceil(globalFte * (currentFte > 0 ? currentHC.jed.fte / currentFte : 1/3));
 
-    const ruhSc = totalSc * (currentSc > 0 ? currentHC.ruh.sc / currentSc : 1/3);
-    const dmmSc = totalSc * (currentSc > 0 ? currentHC.dmm.sc / currentSc : 1/3);
-    const jedSc = totalSc * (currentSc > 0 ? currentHC.jed.sc / currentSc : 1/3);
+    const ruhSc = Math.ceil(globalSc * (currentSc > 0 ? currentHC.ruh.sc / currentSc : 1/3));
+    const dmmSc = Math.ceil(globalSc * (currentSc > 0 ? currentHC.dmm.sc / currentSc : 1/3));
+    const jedSc = Math.ceil(globalSc * (currentSc > 0 ? currentHC.jed.sc / currentSc : 1/3));
+
+    // 3. Sum up the rounded station values for the final totals
+    const totalFte = ruhFte + dmmFte + jedFte;
+    const totalSc = ruhSc + dmmSc + jedSc;
+    const totalHC = totalFte + totalSc;
 
     return {
       totalHours,
@@ -291,9 +296,9 @@ export default function App() {
     };
   }, [tonnage, productivity, loadingFactor, currentHC, currentFte, currentSc, effectiveMinFtePercent]);
 
-  const savings = useMemo(() => {
-    const fteDiff = currentFte - manpower.totalFte;
-    const scDiff = currentSc - manpower.totalSc;
+  const costMovement = useMemo(() => {
+    const fteDiff = manpower.totalFte - currentFte;
+    const scDiff = manpower.totalSc - currentSc;
     return (fteDiff * fteCost) + (scDiff * scCost);
   }, [currentFte, currentSc, manpower.totalFte, manpower.totalSc, fteCost, scCost]);
 
@@ -573,11 +578,11 @@ export default function App() {
             />
             <StatCard 
               label="Est. Monthly Savings" 
-              value={`SGD ${(-savings).toLocaleString()}`} 
-              subtext={savings >= 0 ? "Potential Cost Reduction" : "Additional Cost Required"}
+              value={`SGD ${costMovement.toLocaleString()}`} 
+              subtext={costMovement < 0 ? "Potential Cost Reduction" : "Additional Cost Required"}
               icon={DollarSign}
-              valueClassName={savings >= 0 ? "text-emerald-600" : "text-rose-600"}
-              subtextClassName={cn("text-sm font-bold", savings >= 0 ? "text-emerald-600" : "text-rose-600")}
+              valueClassName={costMovement < 0 ? "text-emerald-600" : costMovement > 0 ? "text-rose-600" : "text-zinc-400"}
+              subtextClassName={cn("text-sm font-bold", costMovement < 0 ? "text-emerald-600" : costMovement > 0 ? "text-rose-600" : "text-zinc-400")}
             />
           </div>
 
@@ -732,26 +737,43 @@ export default function App() {
                 <tbody className="divide-y divide-zinc-50">
                   {(() => {
                     const stationData = [
-                      { id: 'ruh', name: 'RUH', fte: manpower.ruhFte, sc: manpower.ruhSc, currentFte: currentHC.ruh.fte, currentSc: currentHC.ruh.sc },
-                      { id: 'dmm', name: 'DMM', fte: manpower.dmmFte, sc: manpower.dmmSc, currentFte: currentHC.dmm.fte, currentSc: currentHC.dmm.sc },
-                      { id: 'jed', name: 'JED', fte: manpower.jedFte, sc: manpower.jedSc, currentFte: currentHC.jed.fte, currentSc: currentHC.jed.sc },
+                      { 
+                        id: 'ruh', 
+                        name: 'RUH', 
+                        recFte: manpower.ruhFte, 
+                        recSc: manpower.ruhSc, 
+                        currentFte: currentHC.ruh.fte, 
+                        currentSc: currentHC.ruh.sc 
+                      },
+                      { 
+                        id: 'dmm', 
+                        name: 'DMM', 
+                        recFte: manpower.dmmFte, 
+                        recSc: manpower.dmmSc, 
+                        currentFte: currentHC.dmm.fte, 
+                        currentSc: currentHC.dmm.sc 
+                      },
+                      { 
+                        id: 'jed', 
+                        name: 'JED', 
+                        recFte: manpower.jedFte, 
+                        recSc: manpower.jedSc, 
+                        currentFte: currentHC.jed.fte, 
+                        currentSc: currentHC.jed.sc 
+                      },
                     ];
 
                     const rows = stationData.map(s => {
-                      const recFte = Math.ceil(s.fte || 0);
-                      const recSc = Math.ceil(s.sc || 0);
-                      const recTotal = recFte + recSc;
+                      const recTotal = s.recFte + s.recSc;
                       const currentTotal = s.currentFte + s.currentSc;
                       const variance = recTotal - currentTotal;
                       const variancePercent = currentTotal > 0 ? (variance / currentTotal) * 100 : 0;
-                      const fteVariance = recFte - s.currentFte;
-                      const scVariance = recSc - s.currentSc;
+                      const fteVariance = s.recFte - s.currentFte;
+                      const scVariance = s.recSc - s.currentSc;
                       const rowSavings = (fteVariance * fteCost) + (scVariance * scCost);
 
                       return {
                         ...s,
-                        recFte,
-                        recSc,
                         recTotal,
                         currentTotal,
                         variance,
@@ -763,12 +785,12 @@ export default function App() {
 
                     const totalRow = {
                       name: 'SATS Saudi',
-                      recFte: rows.reduce((acc, r) => acc + r.recFte, 0),
-                      recSc: rows.reduce((acc, r) => acc + r.recSc, 0),
-                      recTotal: rows.reduce((acc, r) => acc + r.recTotal, 0),
-                      currentTotal: rows.reduce((acc, r) => acc + r.currentTotal, 0),
-                      variance: rows.reduce((acc, r) => acc + r.variance, 0),
-                      rowSavings: rows.reduce((acc, r) => acc + r.rowSavings, 0),
+                      recFte: manpower.totalFte,
+                      recSc: manpower.totalSc,
+                      recTotal: manpower.totalHC,
+                      currentTotal: currentFte + currentSc,
+                      variance: manpower.totalHC - (currentFte + currentSc),
+                      rowSavings: costMovement,
                       highlight: true
                     };
 
