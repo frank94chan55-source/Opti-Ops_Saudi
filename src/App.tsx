@@ -157,7 +157,9 @@ const StatCard = ({ label, value, subtext, icon: Icon, trend, valueClassName, su
     </div>
     <div>
       <p className="text-xs font-mono uppercase tracking-widest text-zinc-600">{label}</p>
-      <h3 className={cn("text-3xl font-mono font-medium mt-1", valueClassName || "text-zinc-950")}>{value}</h3>
+      <h3 className={cn("text-3xl font-mono font-medium mt-1", valueClassName || "text-zinc-950")}>
+        {typeof value === 'number' && isNaN(value) ? '0' : value}
+      </h3>
       {subtext && <p className={cn("text-xs font-mono mt-1", subtextClassName || "text-zinc-600")}>{subtext}</p>}
     </div>
   </motion.div>
@@ -187,7 +189,7 @@ export default function App() {
     dmm: { fte: 12, sc: 23 },
     jed: { fte: 11, sc: 71 }
   });
-  const [loadingFactor, setLoadingFactor] = useState(1.05);
+  const [loadingFactor, setLoadingFactor] = useState(1.1);
   const [fteCost, setFteCost] = useState(2200);
   const [scCost, setScCost] = useState(1500);
 
@@ -242,62 +244,64 @@ export default function App() {
     handleOverallProductivityChange(overallProductivity);
   }, [tonnage, totalTonnage]);
 
-  const calculateHours = (t: number, p: number) => (t * 1000) / p;
+  const calculateHours = (t: number, p: number) => p > 0 ? (t * 1000) / p : 0;
 
-  const results = useMemo(() => {
-    const ruhHours = calculateHours(tonnage.ruh, productivity.ruh) * loadingFactor;
-    const dmmHours = calculateHours(tonnage.dmm, productivity.dmm) * loadingFactor;
-    const jedHours = calculateHours(tonnage.jed, productivity.jed) * loadingFactor;
+  const manpower = useMemo(() => {
+    const ruhHoursRaw = calculateHours(tonnage.ruh, productivity.ruh) * loadingFactor;
+    const dmmHoursRaw = calculateHours(tonnage.dmm, productivity.dmm) * loadingFactor;
+    const jedHoursRaw = calculateHours(tonnage.jed, productivity.jed) * loadingFactor;
     
-    const OPERATING_DAYS = 30;
-    const MONTHLY_HOURS = 300; // 10 hours * 30 days
+    const totalHours = ruhHoursRaw + dmmHoursRaw + jedHoursRaw;
+    const MONTHLY_HOURS = 300;
     
-    const ruhHC = ruhHours / MONTHLY_HOURS;
-    const dmmHC = dmmHours / MONTHLY_HOURS;
-    const jedHC = jedHours / MONTHLY_HOURS;
+    // 1. Global Optimization based on current total FTE%
+    const minFteHours = totalHours * (effectiveMinFtePercent / 100);
+    const totalFte = Math.ceil(minFteHours / MONTHLY_HOURS);
+    const remainingHours = Math.max(0, totalHours - (totalFte * MONTHLY_HOURS));
+    const totalSc = Math.ceil(remainingHours / MONTHLY_HOURS);
+    const totalHC = totalFte + totalSc;
+
+    // 2. Distribute FTEs and SCs based on their respective current shares
+    const ruhFte = totalFte * (currentFte > 0 ? currentHC.ruh.fte / currentFte : 1/3);
+    const dmmFte = totalFte * (currentFte > 0 ? currentHC.dmm.fte / currentFte : 1/3);
+    const jedFte = totalFte * (currentFte > 0 ? currentHC.jed.fte / currentFte : 1/3);
+
+    const ruhSc = totalSc * (currentSc > 0 ? currentHC.ruh.sc / currentSc : 1/3);
+    const dmmSc = totalSc * (currentSc > 0 ? currentHC.dmm.sc / currentSc : 1/3);
+    const jedSc = totalSc * (currentSc > 0 ? currentHC.jed.sc / currentSc : 1/3);
 
     return {
-      ruh: ruhHours,
-      dmm: dmmHours,
-      jed: jedHours,
-      total: ruhHours + dmmHours + jedHours,
-      ruhHC,
-      dmmHC,
-      jedHC,
-      totalHC: ruhHC + dmmHC + jedHC,
-      fteMonthlyHours: MONTHLY_HOURS,
-      scMonthlyHours: MONTHLY_HOURS,
-      operatingDays: OPERATING_DAYS
+      totalHours,
+      totalFte,
+      totalSc,
+      totalHC,
+      ruhFte,
+      dmmFte,
+      jedFte,
+      ruhSc,
+      dmmSc,
+      jedSc,
+      ruhHC: ruhFte + ruhSc,
+      dmmHC: dmmFte + dmmSc,
+      jedHC: jedFte + jedSc,
+      ruhHours: (ruhFte + ruhSc) * MONTHLY_HOURS,
+      dmmHours: (dmmFte + dmmSc) * MONTHLY_HOURS,
+      jedHours: (jedFte + jedSc) * MONTHLY_HOURS,
+      monthlyHours: MONTHLY_HOURS
     };
-  }, [tonnage, productivity, loadingFactor]);
-
-  // Optimization Logic
-  const optimization = useMemo(() => {
-    const requiredHours = results.total;
-    const minFteHours = requiredHours * (effectiveMinFtePercent / 100);
-    
-    const fte = Math.ceil(minFteHours / results.fteMonthlyHours);
-    const remainingHours = Math.max(0, requiredHours - (fte * results.fteMonthlyHours));
-    const sc = Math.ceil(remainingHours / results.scMonthlyHours);
-
-    return { fte, sc };
-  }, [results.total, results.fteMonthlyHours, results.scMonthlyHours, effectiveMinFtePercent]);
-
-  const manpowerResult = useMemo(() => {
-    return optimization;
-  }, [optimization]);
+  }, [tonnage, productivity, loadingFactor, currentHC, currentFte, currentSc, effectiveMinFtePercent]);
 
   const savings = useMemo(() => {
-    const fteDiff = currentFte - optimization.fte;
-    const scDiff = currentSc - optimization.sc;
+    const fteDiff = currentFte - manpower.totalFte;
+    const scDiff = currentSc - manpower.totalSc;
     return (fteDiff * fteCost) + (scDiff * scCost);
-  }, [currentFte, currentSc, optimization, fteCost, scCost]);
+  }, [currentFte, currentSc, manpower.totalFte, manpower.totalSc, fteCost, scCost]);
 
   const chartData = [
-    { name: 'RUH', heads: results.ruhHC, color: '#18181b' },
-    { name: 'DMM', heads: results.dmmHC, color: '#3f3f46' },
-    { name: 'JED', heads: results.jedHC, color: '#71717a' },
-    { name: 'SATS Saudi', heads: results.totalHC, color: '#ef2536' },
+    { name: 'RUH', heads: manpower.ruhHC, color: '#18181b' },
+    { name: 'DMM', heads: manpower.dmmHC, color: '#3f3f46' },
+    { name: 'JED', heads: manpower.jedHC, color: '#71717a' },
+    { name: 'SATS Saudi', heads: manpower.totalHC, color: '#ef2536' },
   ];
 
   return (
@@ -522,7 +526,7 @@ export default function App() {
                     <input 
                       type="number" 
                       value={fteCost}
-                      onChange={(e) => setFteCost(Number(e.target.value))}
+                      onChange={(e) => setFteCost(e.target.value === "" ? 0 : Number(e.target.value))}
                       className="w-full bg-white border border-zinc-300 rounded pl-5 pr-2 py-1.5 text-xs font-mono text-zinc-900 focus:outline-none focus:border-zinc-500"
                     />
                   </div>
@@ -534,7 +538,7 @@ export default function App() {
                     <input 
                       type="number" 
                       value={scCost}
-                      onChange={(e) => setScCost(Number(e.target.value))}
+                      onChange={(e) => setScCost(e.target.value === "" ? 0 : Number(e.target.value))}
                       className="w-full bg-white border border-zinc-300 rounded pl-5 pr-2 py-1.5 text-xs font-mono text-zinc-900 focus:outline-none focus:border-zinc-500"
                     />
                   </div>
@@ -551,19 +555,19 @@ export default function App() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <StatCard 
               label="Recommended Total Headcount" 
-              value={Math.ceil(results.totalHC)} 
-              subtext={`${Math.round(results.total).toLocaleString()} Productive Hours`}
+              value={Math.ceil(manpower.totalHC)} 
+              subtext={`${Math.round(manpower.totalHours).toLocaleString()} Productive Hours`}
               icon={Users}
             />
             <StatCard 
               label="Recommended FTE Headcount" 
-              value={optimization.fte} 
+              value={manpower.totalFte} 
               subtext="Full-Time Employees"
               icon={Users}
             />
             <StatCard 
               label="Recommended SC Headcount" 
-              value={optimization.sc} 
+              value={manpower.totalSc} 
               subtext="Sub-Contractors"
               icon={Users}
             />
@@ -603,7 +607,7 @@ export default function App() {
                       contentStyle={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                       itemStyle={{ color: '#0f172a', fontFamily: 'monospace', fontSize: '11px' }}
                       labelStyle={{ color: '#64748b', fontFamily: 'monospace', fontSize: '11px', marginBottom: '4px' }}
-                      formatter={(value: number) => [Math.ceil(value), "Headcount"]}
+                      formatter={(value: number) => [Math.ceil(value || 0), "Headcount"]}
                     />
                     <Bar dataKey="heads" radius={[0, 4, 4, 0]} barSize={32}>
                       {chartData.map((entry, index) => (
@@ -613,7 +617,7 @@ export default function App() {
                         dataKey="heads" 
                         position="right" 
                         style={{ fill: '#18181b', fontSize: '11px', fontFamily: 'monospace', fontWeight: 'bold' }}
-                        formatter={(value: number) => Math.ceil(value)}
+                        formatter={(value: number) => Math.ceil(value || 0)}
                       />
                     </Bar>
                   </BarChart>
@@ -647,25 +651,25 @@ export default function App() {
                       { 
                         name: 'Riyadh (RUH)', 
                         hours: STATION_HOURS.ruh, 
-                        reqHours: results.ruh, 
+                        reqHours: manpower.ruhHours, 
                         currentHC: currentHC.ruh.fte + currentHC.ruh.sc 
                       },
                       { 
                         name: 'Dammam (DMM)', 
                         hours: STATION_HOURS.dmm, 
-                        reqHours: results.dmm, 
+                        reqHours: manpower.dmmHours, 
                         currentHC: currentHC.dmm.fte + currentHC.dmm.sc 
                       },
                       { 
                         name: 'Jeddah (JED)', 
                         hours: STATION_HOURS.jed, 
-                        reqHours: results.jed, 
+                        reqHours: manpower.jedHours, 
                         currentHC: currentHC.jed.fte + currentHC.jed.sc 
                       },
                       { 
                         name: 'Saudi Total', 
                         hours: '-', 
-                        reqHours: results.total, 
+                        reqHours: manpower.totalHours, 
                         currentHC: currentFte + currentSc, 
                         highlight: true 
                       },
@@ -720,48 +724,85 @@ export default function App() {
                     <th className="px-6 py-5 font-medium">Recommended Total Headcount</th>
                     <th className="px-6 py-5 font-medium">Variance (Headcount)</th>
                     <th className="px-6 py-5 font-medium">Variance %</th>
+                    <th className="px-6 py-5 font-medium">Est. Cost Movement</th>
                     <th className="px-6 py-5 font-medium">Recommended Headcount - FTE</th>
                     <th className="px-6 py-5 font-medium text-right">Recommended Headcount - SC</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-50">
                   {(() => {
-                    const totalHeads = manpowerResult.fte + manpowerResult.sc;
-                    const fteRatio = totalHeads > 0 ? manpowerResult.fte / totalHeads : 0;
-                    const scRatio = totalHeads > 0 ? manpowerResult.sc / totalHeads : 0;
-
                     const stationData = [
-                      { id: 'ruh', name: 'RUH', hc: results.ruhHC, current: currentHC.ruh.fte + currentHC.ruh.sc },
-                      { id: 'dmm', name: 'DMM', hc: results.dmmHC, current: currentHC.dmm.fte + currentHC.dmm.sc },
-                      { id: 'jed', name: 'JED', hc: results.jedHC, current: currentHC.jed.fte + currentHC.jed.sc },
-                      { id: 'total', name: 'SATS Saudi', hc: results.totalHC, current: currentFte + currentSc, highlight: true },
+                      { id: 'ruh', name: 'RUH', fte: manpower.ruhFte, sc: manpower.ruhSc, currentFte: currentHC.ruh.fte, currentSc: currentHC.ruh.sc },
+                      { id: 'dmm', name: 'DMM', fte: manpower.dmmFte, sc: manpower.dmmSc, currentFte: currentHC.dmm.fte, currentSc: currentHC.dmm.sc },
+                      { id: 'jed', name: 'JED', fte: manpower.jedFte, sc: manpower.jedSc, currentFte: currentHC.jed.fte, currentSc: currentHC.jed.sc },
                     ];
 
-                    return stationData.map((row, i) => {
-                      const recTotal = row.hc;
-                      const recFte = row.hc * fteRatio;
-                      const recSc = row.hc * scRatio;
-                      const variance = recTotal - row.current;
-                      const variancePercent = row.current > 0 ? (variance / row.current) * 100 : 0;
+                    const rows = stationData.map(s => {
+                      const recFte = Math.ceil(s.fte || 0);
+                      const recSc = Math.ceil(s.sc || 0);
+                      const recTotal = recFte + recSc;
+                      const currentTotal = s.currentFte + s.currentSc;
+                      const variance = recTotal - currentTotal;
+                      const variancePercent = currentTotal > 0 ? (variance / currentTotal) * 100 : 0;
+                      const fteVariance = recFte - s.currentFte;
+                      const scVariance = recSc - s.currentSc;
+                      const rowSavings = (fteVariance * fteCost) + (scVariance * scCost);
+
+                      return {
+                        ...s,
+                        recFte,
+                        recSc,
+                        recTotal,
+                        currentTotal,
+                        variance,
+                        variancePercent,
+                        rowSavings,
+                        highlight: false
+                      };
+                    });
+
+                    const totalRow = {
+                      name: 'SATS Saudi',
+                      recFte: rows.reduce((acc, r) => acc + r.recFte, 0),
+                      recSc: rows.reduce((acc, r) => acc + r.recSc, 0),
+                      recTotal: rows.reduce((acc, r) => acc + r.recTotal, 0),
+                      currentTotal: rows.reduce((acc, r) => acc + r.currentTotal, 0),
+                      variance: rows.reduce((acc, r) => acc + r.variance, 0),
+                      rowSavings: rows.reduce((acc, r) => acc + r.rowSavings, 0),
+                      highlight: true
+                    };
+
+                    const allRows = [...rows, totalRow];
+
+                    return allRows.map((row, i) => {
+                      const vPercent = row.name === 'SATS Saudi' 
+                        ? (row.currentTotal > 0 ? (row.variance / row.currentTotal) * 100 : 0)
+                        : (row as any).variancePercent;
 
                       return (
                         <tr key={i} className={cn("hover:bg-zinc-50/50 transition-colors", row.highlight && "bg-zinc-50 font-bold")}>
                           <td className="px-6 py-5 text-zinc-950">{row.name}</td>
-                          <td className="px-6 py-5 text-zinc-700">{Math.ceil(recTotal)}</td>
+                          <td className="px-6 py-5 text-zinc-700">{row.recTotal.toLocaleString()}</td>
                           <td className={cn(
                             "px-6 py-5 font-bold",
-                            variance > 0 ? "text-emerald-600" : variance < 0 ? "text-rose-600" : "text-zinc-400"
+                            row.variance < 0 ? "text-emerald-600" : row.variance > 0 ? "text-rose-600" : "text-zinc-400"
                           )}>
-                            {variance > 0 ? `+${Math.ceil(variance)}` : Math.ceil(variance)}
+                            {row.variance > 0 ? `+${row.variance.toLocaleString()}` : row.variance.toLocaleString()}
                           </td>
                           <td className={cn(
                             "px-6 py-5 font-bold",
-                            variancePercent > 0 ? "text-emerald-600" : variancePercent < 0 ? "text-rose-600" : "text-zinc-400"
+                            vPercent < 0 ? "text-emerald-600" : vPercent > 0 ? "text-rose-600" : "text-zinc-400"
                           )}>
-                            {variancePercent > 0 ? `+${variancePercent.toFixed(1)}%` : `${variancePercent.toFixed(1)}%`}
+                            {vPercent > 0 ? `+${vPercent.toFixed(1)}%` : `${vPercent.toFixed(1)}%`}
                           </td>
-                          <td className="px-6 py-5 text-zinc-700">{Math.ceil(recFte)}</td>
-                          <td className="px-6 py-5 text-zinc-700 text-right">{Math.ceil(recSc)}</td>
+                          <td className={cn(
+                            "px-6 py-5 font-bold",
+                            row.rowSavings < 0 ? "text-emerald-600" : row.rowSavings > 0 ? "text-rose-600" : "text-zinc-400"
+                          )}>
+                            {`SGD ${(row.rowSavings || 0).toLocaleString()}`}
+                          </td>
+                          <td className="px-6 py-5 text-zinc-700">{row.recFte.toLocaleString()}</td>
+                          <td className="px-6 py-5 text-zinc-700 text-right">{row.recSc.toLocaleString()}</td>
                         </tr>
                       );
                     });
